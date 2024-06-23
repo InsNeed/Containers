@@ -1,0 +1,313 @@
+#include "mainwindow.h"
+#include "ui_mainwindow.h"
+
+MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
+    ui(new Ui::MainWindow)
+{
+    ui->setupUi(this);
+
+    /*数据库部分*/
+    initDBServer(); // 连接到DB库
+    createTable();  // 建表，或者打开默认表
+    insertData(QString(MainWindow::getCurrentTimeByFormat()), QString("<99>"), QString("sdass"));
+    selectHistoryNum(10);
+    selectHistoryWho("<99>",10);
+
+    /*网络部分*/
+    qDebug() << read_ipv4_address() << PORT_SERVER;
+    cfgTcpServer();
+}
+
+MainWindow::~MainWindow()
+{
+    //关闭时候要写，析构，断开每个连接的客户端，和监听
+    for(int i=0;i<socketList.size();++i){
+        socketList.at(i)->close();
+    }
+
+    // 如果还在监听
+    if(serverNode->isListening())
+        serverNode->close();
+
+    delete ui;
+}
+
+QString MainWindow::getCurrentTimeByFormat()
+{
+    QDateTime dt = QDateTime::currentDateTime();
+    QString fdt = dt.toString("yyyy/MM/dd hh时mm分ss秒");
+    return fdt;
+}
+QString MainWindow::read_ipv4_address()
+{
+    QString ip_address;
+
+    QList<QHostAddress> ipAddressesList = QNetworkInterface::allAddresses();
+
+    for (int i = 0; i < ipAddressesList.size(); ++i)
+    {
+        if ((ipAddressesList.at(i) != QHostAddress::LocalHost) && ipAddressesList.at(i).toIPv4Address())
+        {
+            ip_address = ipAddressesList.at(i).toString();
+
+            qDebug() << "get  " << ip_address; // debug
+
+            if (ip_address.startsWith("192.168", Qt::CaseSensitive))
+            {
+                qDebug() << "找到192.168的开头" << ip_address; // debug
+                return ip_address;
+            }
+        }
+    }
+
+    // 没有能用的地址，就返回 回环地址
+    if (ip_address.isEmpty())
+        ip_address = QHostAddress(QHostAddress::LocalHost).toString();
+
+    return ip_address;
+}
+bool MainWindow::initDBServer()
+{
+    // 创建去连接数据库的对象
+    db = QSqlDatabase::addDatabase("QSQLITE");
+
+    // 要 打开 或者 创建 的数据库 名称
+    db.setDatabaseName(_dbName);
+
+    // 打开数据库连接
+    if (db.open())
+    {
+        qDebug() << "连接并打开数据库成功";
+        return true;
+    }
+    else
+    {
+        _infoErr = db.lastError();
+        _textErr = _infoErr.text();
+        QMessageBox::critical(this, "错误", _textErr);
+
+        return false;
+    }
+}
+void MainWindow::createTable()
+{
+    // 建表语句
+    _sqlCmd = "CREATE TABLE chatHistory(time TEXT PRIMARY KEY,name TEXT,talk TEXT);";
+
+    QSqlQuery _sqOpt; // 操作对象
+
+    // 是否成功执行创建表命令
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        qDebug() << "第一回建表成功";
+    }
+    else
+    {
+        _infoErr = _sqOpt.lastError();
+        _textErr = _infoErr.text();
+        qDebug() << "建表失败，可能已经存在。具体信息为>" << _textErr;
+    }
+}
+void MainWindow::insertData(const QString &time, const QString &name, const QString &talk)
+{
+    // 预处理的SQL语句
+    _sqlCmd = "INSERT INTO chatHistory VALUES(?,?,?)";
+
+    // 操作对象
+    QSqlQuery _sqOpt;
+
+    // 预处理，会与exec绑定为默认执行的语句
+    _sqOpt.prepare(_sqlCmd);
+
+    // 绑定参数 （ODBC风格）
+    // 按照顺序，不然失败
+    _sqOpt.addBindValue(time);
+    _sqOpt.addBindValue(name);
+    _sqOpt.addBindValue(talk);
+
+    // 执行绑定后的SQL语句
+    if (_sqOpt.exec()) // 成功
+    {
+        qDebug() << "数据插入成功";
+        qDebug() << time << name << talk;
+    }
+    else // 失败
+    {
+        _infoErr = _sqOpt.lastError();
+        _textErr = _infoErr.text();
+
+        _textErr.prepend("数据插入失败!");
+
+        QMessageBox::warning(this, "通知", _textErr);
+    }
+}
+void MainWindow::selectHistoryNum(int num)
+{
+    _sqlCmd = "SELECT * FROM [tableName] LIMIT [tableNum]";
+    ;
+    _sqlCmd.replace("[tableName]", _tableNameChat);
+    _sqlCmd.replace("[tableNum]", QString::number(num));
+    qDebug() << _sqlCmd;
+
+    QSqlQuery _sqOpt;
+
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        QString serialNum = "(?)"; // 序号
+        int i = 0;
+
+        while (_sqOpt.next())
+        {
+            serialNum.replace(1, 1, QString::number(i++)); // 编号
+            QString time = _sqOpt.value(0).toString();     // 时间
+            QString name = _sqOpt.value(1).toString();     // 姓名
+            QString talk = _sqOpt.value(2).toString();     // 对话
+
+            QString ret = serialNum + " " + time + " " + name + " " + talk;
+
+            qDebug() << ret;
+        }
+    }
+}
+void MainWindow::selectHistoryWho(const QString &name, int num)
+{
+    _sqlCmd = "SELECT * FROM [tableName] where name=\"[name]\";";
+    _sqlCmd.replace("[tableName]", _tableNameChat);
+    _sqlCmd.replace("[name]", name);
+
+    qDebug() << _sqlCmd;
+
+    QSqlQuery _sqOpt;
+
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        QString serialNum = "(?)"; // 序号
+        int i = 0;
+
+        while (_sqOpt.next() && (i < num))
+        {
+            serialNum.replace(1, 1, QString::number(i++)); // 编号
+            QString time = _sqOpt.value(0).toString();     // 时间
+            QString name = _sqOpt.value(1).toString();     // 姓名
+            QString talk = _sqOpt.value(2).toString();     // 对话
+
+            QString ret = serialNum + " " + time + " " + name + " " + talk;
+
+            qDebug() << ret;
+        }
+    }
+}
+
+void MainWindow::cfgInit()
+{
+}
+void MainWindow::cfgMenuBar()
+{
+}
+void MainWindow::cfgTimerLcd()
+{
+}
+
+void MainWindow::cfgTcpServer()
+{
+    // 别忘记pro文件添加network
+    // 创建一个管理，只是管理，有一个母鸡足够
+    serverNode = new QTcpServer(this);
+
+    // 开启监听服务
+    serverNode->listen(QHostAddress::Any, PORT_SERVER); // 可以或者修改port，ip为本机的
+
+    /*添加槽函数*/
+
+    // 新连接来，会生成新的连接对象去各自处理
+    connect(serverNode, SIGNAL(newConnection()), this, SLOT(newConnectSlot()));
+}
+
+void MainWindow::newConnectSlot()
+{
+    // 服务器端，来获得新连接的类对象
+    // 返回与客户端连接的QTcpSocket对象(无IO读写能力)
+    QTcpSocket *socketNew = serverNode->nextPendingConnection();
+
+    // 创建适用于qt之间纯文本通信的对象， 给新对象通信用
+    QTextStream output(socketNew);
+
+    // 如果满员，则关闭新来的连接，不允许加入
+    if (socketList.size() == CONNECT_MAX_LEN)
+    {
+        qDebug() << "聊天室满员，不能允许新连接加入";        // 调试打印
+
+        output << QString("聊天室满员，不能允许新连接加入"); // 发给新来没加入的客户端
+
+        socketNew->close();
+
+        return;
+    }
+    else
+    {
+        // 和客户端正式通信
+        output << QString("您已正式建立连接");
+
+        socketList.append(socketNew); // 加入到列表
+    }
+
+    // 绿蛋（对应客户端）接收到消息的信号槽
+    connect(socketNew, SIGNAL(readyRead()), this, SLOT(readyReadSlot()));
+
+    // 绿蛋（对应客户端）断开连接（掉线）的信号槽
+    connect(socketNew, SIGNAL(disconnected()), this, SLOT(disconnectedSlot()));
+
+    /*获取新客户端的信息*/
+    initInfoString();//先初始化元素初值
+    updateInfoString(socketNew,socketList,_talk);//更新显示的数据内容
+
+    //打印调试
+    qDebug() << _infoAllSocket;
+}
+
+void MainWindow::readyReadSlot()
+{
+    qDebug() << "服务器收到新消息";
+
+    for(int i=0;i<socketList.size();i++)
+    {
+        if(socketList.at(i)->isReadable() && socketList.at(i)->bytesAvailable()>0)
+        {
+            qDebug() << "第" << i << "个客户端发的消息";
+
+            //获取内容
+            QTextStream input(socketList.at(i));
+            _talk = input.readAll();
+            initInfoString();//先初始化元素初值
+            updateInfoString(socketList[i],socketList,_talk);//更新显示的数据内容
+
+            ui->textBrowser->append(_infoAllSocket);
+            qDebug() << _infoAllSocket;
+
+            //转发
+//            for(int m=0;m<sockets.size();m++)
+//            {
+//                if(m==i)
+//                    continue;
+//                QTextStream output(sockets.at(m));
+//                output << text;
+//            }
+
+        }
+    }
+
+
+//    QTextStream input(serverNode);
+//    _talk = input.readAll();
+
+//    initInfoString();//先初始化元素初值
+//    updateInfoString(serverNode,socketList,_talk);//更新显示的数据内容
+
+//    ui->textBrowser->append(_infoAllSocket);
+//    qDebug() << _infoAllSocket;
+}
+
+void MainWindow::disconnectedSlot()
+{
+
+}

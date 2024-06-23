@@ -1,0 +1,160 @@
+#include "dialog.h"
+#include "ui_dialog.h"
+
+Dialog::Dialog(QWidget *parent) : QDialog(parent),
+                                  ui(new Ui::Dialog)
+{
+    ui->setupUi(this);
+
+    // 点击了 连接 按钮
+    connect(ui->pushButtonConn, SIGNAL(clicked()), this, SLOT(btnConnectClickedSlot()));
+
+    // 点击了 发送 按钮
+    connect(ui->pushButtonSend, SIGNAL(clicked()), this, SLOT(btnSendClickedSlot()));
+
+    // 连接上了 后改变按钮状态
+    connect(ui->pushButtonConnect, SIGNAL(clicked()), this, SLOT(connectTcpServerSlot()));
+
+    // 连接断开了，改变按钮状态
+    connect(client, SIGNAL(disconnected()), this, SLOT(disconnectedTcpServerSlot()));
+
+    // 接收到消息了的信号槽
+    connect(client, SIGNAL(readyRead()), this, SLOT(readReadSlot()));
+
+}
+
+Dialog::~Dialog()
+{
+    disconnect(socket, SIGNAL(disconnected()), this, SLOT(disconnectSlot()));
+
+    // 如果还在连接
+    if (socket->isOpen())
+        socket->close();
+
+    delete ui;
+}
+
+bool Dialog::isRightInt(QString str)
+{
+    bool isInt;
+    int ret = str.toInt(&isInt);
+    if (isInt != true) // 不是整数
+        return isInt;
+    else
+    {
+        if (ret < 0 || ret > 255)
+            return false;
+        else
+            return true;
+    }
+}
+bool Dialog::isRightFormatIP(QString ip)
+{
+    QStringList lis1 = ip.split(".");
+
+    // 判断几个部分
+    if (lis1.count() != 4)
+    {
+        qDebug() << "不是4部分";
+        return false;
+    }
+
+    // 判断每个部分是否是数字
+    if (!(isRightInt(lis1.at(0)) && isRightInt(lis1.at(1)) && isRightInt(lis1.at(2)) && isRightInt(lis1.at(3))))
+    {
+        qDebug() << "不是每个部分都是正确数字";
+        return false;
+    }
+
+    return true;
+}
+
+bool Dialog::connectTcpServerSlot()
+{
+    qDebug() << "去建立连接";
+
+    // 初始化相关
+    ui->pushButtonConnect->setEnabled(false);
+    ui->pushButtonConnect->setText("连接中");
+    FLAG_CONNECT = false;
+
+    // ip检测，获取port
+    _ip = ui->lineEdit_IP->text();
+    if (!Dialog::isRightFormatIP(_ip))
+    {
+        QMessageBox::warning(this, "警告", "ip地址格式错误");
+        FLAG_CONNECT = false;
+        return false;
+    }
+    else
+    {
+        bool ok;
+        _portText = ui->lineEdit_PORT->text();
+        _portNum = _portText.toInt(&ok);
+        if (!ok)
+        {
+            QMessageBox::warning(this, "警告", "port转换错误");
+            return false;
+        }
+    }
+
+    // 去创建有IO能力的socket对象，去连接服务器
+    static bool f1 = false;
+    if (f1 == false)
+    {
+        f1 = true;
+        clinet = new QTcpSocket(this); // 只创建一个连接对象
+    }
+
+    clinet->connectToHost(_ip, _portNum);
+    if (socket->waitForConnected(3000))
+    {
+        // 在规定时间内，成功连接
+        ui->pushButtonConnect->setEnabled(false);
+        ui->pushButtonConnect->setText("已连接服务器");
+        FLAG_CONNECT = true;
+        return true;
+    }
+    else
+    {
+        QMessageBox::warning(this, "警告", "连接失败");
+
+        // 失败，更改按钮
+        ui->pushButtonConnect->setEnabled(true);
+        ui->pushButtonConnect->setText("再次连接");
+        FLAG_CONNECT = false;
+        return false;
+    }
+
+    /*此时，能IO的socket已经成功，再添加信号槽*/
+
+    // 被服务器断开连接了
+    connect(socket, SIGNAL(disconnected()), this, SLOT(disconnectSlot()));
+
+    // 主动去发送
+    connect(ui->pushButtonSend, SIGNAL(clicked()), this, SLOT(clickedSendSlot()));
+}
+
+void Dialog::disconnectSlot()
+{
+    // TODO 问题在于，根本没进入这个
+
+    QMessageBox::warning(this, "警告", "服务器主动断开连接");
+    qDebug() << "服务器主动断开连接";
+
+    ui->pushButtonConnect->setEnabled(true);
+    ui->pushButtonConnect->setText("再次连接");
+    FLAG_CONNECT = false;
+}
+
+void Dialog::clickedSendSlot()
+{
+    _nameInput = "<?>::";
+    _nameInput.replace(1, 1, ui->lineEdit_name->text());
+    _textInput = ui->lineEdit_inpuit->text();
+
+    _textSend = _nameInput.append(_textInput);
+
+    QTextStream output(socket);
+    output << _nameInput << _textInput;
+}

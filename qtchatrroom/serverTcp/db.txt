@@ -1,0 +1,197 @@
+
+    /*数据库部分*/
+//    initDBServer(); // 连接到DB库
+//    createTable();  // 建表，或者打开默认表
+//    insertData(QString(MainWindow::getCurrentTimeByFormat()), QString("<99>"), QString("sdass"));
+//    selectHistoryNum(10);
+//    selectHistoryWho("<99>",10);
+
+    /*网络部分*/
+    qDebug() << read_ipv4_address() << PORT_SERVER;
+    cfgTcpServer();
+
+
+    /*数据库部分*/
+    QSqlDatabase db;                        // 数据库连接对象
+    QString _dbName = "chatServer.db";      // 数据库 名称
+    QString _tableNameChat = "chatHistory"; // 表名
+    QSqlError _infoErr;                     // 错误信息封装类
+    QString _textErr;                       // 提取的错误信息
+    QString _sqlCmd;                        // sql命令
+
+    bool initDBServer();                                                // 连接到数据库
+    void createTable();                                                 // 建表，或者打开默认表
+    void insertData(const QString &, const QString &, const QString &); // 插入记录
+    void selectHistoryNum(int);                                         // 查询最近n条记录
+    void selectHistoryWho(const QString &, int);                        // 查询某个人的所有聊天记录,可指定条目数量
+
+
+
+
+/*数据库部分*/
+QString MainWindow::getCurrentTimeByFormat()
+{
+    QDateTime dt = QDateTime::currentDateTime();
+    QString fdt = dt.toString("yyyy/MM/dd hh时mm分ss秒");
+    return fdt;
+}
+QString MainWindow::read_ipv4_address()
+{
+    QString ip_address;
+
+    QList<QHostAddress> ipAddressesList = QNetworkInterface::allAddresses();
+
+    for (int i = 0; i < ipAddressesList.size(); ++i)
+    {
+        if ((ipAddressesList.at(i) != QHostAddress::LocalHost) && ipAddressesList.at(i).toIPv4Address())
+        {
+            ip_address = ipAddressesList.at(i).toString();
+
+            qDebug() << "get  " << ip_address; // debug
+
+            if (ip_address.startsWith("192.168", Qt::CaseSensitive))
+            {
+                qDebug() << "找到192.168的开头" << ip_address; // debug
+                return ip_address;
+            }
+        }
+    }
+
+    // 没有能用的地址，就返回 回环地址
+    if (ip_address.isEmpty())
+        ip_address = QHostAddress(QHostAddress::LocalHost).toString();
+
+    return ip_address;
+}
+bool MainWindow::initDBServer()
+{
+    // 创建去连接数据库的对象
+    db = QSqlDatabase::addDatabase("QSQLITE");
+
+    // 要 打开 或者 创建 的数据库 名称
+    db.setDatabaseName(_dbName);
+
+    // 打开数据库连接
+    if (db.open())
+    {
+        qDebug() << "连接并打开数据库成功";
+        return true;
+    }
+    else
+    {
+        _infoErr = db.lastError();
+        _textErr = _infoErr.text();
+        QMessageBox::critical(this, "错误", _textErr);
+
+        return false;
+    }
+}
+void MainWindow::createTable()
+{
+    // 建表语句
+    _sqlCmd = "CREATE TABLE chatHistory(time TEXT PRIMARY KEY,name TEXT,talk TEXT);";
+
+    QSqlQuery _sqOpt; // 操作对象
+
+    // 是否成功执行创建表命令
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        qDebug() << "第一回建表成功";
+    }
+    else
+    {
+        _infoErr = _sqOpt.lastError();
+        _textErr = _infoErr.text();
+        qDebug() << "建表失败，可能已经存在。具体信息为>" << _textErr;
+    }
+}
+void MainWindow::insertData(const QString &time, const QString &name, const QString &talk)
+{
+    // 预处理的SQL语句
+    _sqlCmd = "INSERT INTO chatHistory VALUES(?,?,?)";
+
+    // 操作对象
+    QSqlQuery _sqOpt;
+
+    // 预处理，会与exec绑定为默认执行的语句
+    _sqOpt.prepare(_sqlCmd);
+
+    // 绑定参数 （ODBC风格）
+    // 按照顺序，不然失败
+    _sqOpt.addBindValue(time);
+    _sqOpt.addBindValue(name);
+    _sqOpt.addBindValue(talk);
+
+    // 执行绑定后的SQL语句
+    if (_sqOpt.exec()) // 成功
+    {
+        qDebug() << "数据插入成功";
+        qDebug() << time << name << talk;
+    }
+    else // 失败
+    {
+        _infoErr = _sqOpt.lastError();
+        _textErr = _infoErr.text();
+
+        _textErr.prepend("数据插入失败!");
+
+        QMessageBox::warning(this, "通知", _textErr);
+    }
+}
+void MainWindow::selectHistoryNum(int num)
+{
+    _sqlCmd = "SELECT * FROM [tableName] LIMIT [tableNum]";
+    ;
+    _sqlCmd.replace("[tableName]", _tableNameChat);
+    _sqlCmd.replace("[tableNum]", QString::number(num));
+    qDebug() << _sqlCmd;
+
+    QSqlQuery _sqOpt;
+
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        QString serialNum = "(?)"; // 序号
+        int i = 0;
+
+        while (_sqOpt.next())
+        {
+            serialNum.replace(1, 1, QString::number(i++)); // 编号
+            QString time = _sqOpt.value(0).toString();     // 时间
+            QString name = _sqOpt.value(1).toString();     // 姓名
+            QString talk = _sqOpt.value(2).toString();     // 对话
+
+            QString ret = serialNum + " " + time + " " + name + " " + talk;
+
+            qDebug() << ret;
+        }
+    }
+}
+void MainWindow::selectHistoryWho(const QString &name, int num)
+{
+    _sqlCmd = "SELECT * FROM [tableName] where name=\"[name]\";";
+    _sqlCmd.replace("[tableName]", _tableNameChat);
+    _sqlCmd.replace("[name]", name);
+
+    qDebug() << _sqlCmd;
+
+    QSqlQuery _sqOpt;
+
+    if (_sqOpt.exec(_sqlCmd))
+    {
+        QString serialNum = "(?)"; // 序号
+        int i = 0;
+
+        while (_sqOpt.next() && (i < num))
+        {
+            serialNum.replace(1, 1, QString::number(i++)); // 编号
+            QString time = _sqOpt.value(0).toString();     // 时间
+            QString name = _sqOpt.value(1).toString();     // 姓名
+            QString talk = _sqOpt.value(2).toString();     // 对话
+
+            QString ret = serialNum + " " + time + " " + name + " " + talk;
+
+            qDebug() << ret;
+        }
+    }
+}
+
